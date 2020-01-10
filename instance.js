@@ -90,6 +90,7 @@ function handleDisconnect() {
     console.log('instance start')
     instance.addTrigger(trigger);
 
+    
     // instance.on(MySQLEvents.EVENTS.CONNECTION_ERROR, (err) => {
     //   if(err) {                                     
     //     console.error('MySQLEvents.EVENTS.CONNECTION_ERROR: ', new Date(), JSON.stringify(err))
