@@ -1,77 +1,122 @@
+const redis = require('redis')
 const mysql = require('mysql')
 const MySQLEvents = require('@rodrigogs/mysql-events');
 const config = require('./config')
 
-let instance 
-let connection
+const getTanggal = require('./tanggal')
 
-function handleDisconnect( trigger ) {
-  connection = null
-  instance = null
-  connection = mysql.createConnection({
+const publisher = redis.createClient();
+
+const trigger = {
+  name: 'TEST',
+  expression: '*',
+  statement: MySQLEvents.STATEMENTS.ALL,
+  onEvent: (event) => { // You will receive the events here
+    if(event.affectedRows.length) {
+      event.affectedRows.map( row => {
+        if(row.after){
+          row = row.after
+        }
+        if(!row.after && row.before){
+          row = row.before
+        }
+        Object.keys(row).map( key => {
+          if(row[key] === 5.877471754111438e-39) {
+            row[key] = 0
+          }
+          if((key.includes('response') || key.includes('data')) && row[key] && typeof row[key] === 'string') {
+            // console.log(key)
+            let n = JSON.parse(JSON.stringify(JSON.parse(row[key])))
+            if(n.response){
+              n = Object.assign({}, n, n.response, {
+                response: undefined
+              })
+            }
+            delete row[key]
+            row = Object.assign({}, row, n)
+          }
+        })
+        row = JSON.parse(JSON.stringify(row))
+
+        let pub = JSON.stringify(Object.assign({}, {
+          simpus: {
+            type: event.type,
+            table: event.table,
+            timestamp: event.timestamp,
+            tanggal: getTanggal(event.timestamp), 
+            row
+          }
+        }))
+
+        publisher.publish('simpus', pub, function(){
+        });
+      })
+    }
+  },
+}
+
+function handleDisconnect() {
+  
+  const connection = mysql.createConnection({
     host     : config.MYSQL_HOST,
     user     : config.MYSQL_USER,
     password : config.MYSQL_PWD,
     database : config.MYSQL_DB
   });
-  
-  // Recreate the connection, since
-  // the old one cannot be reused.
 
-  connection.connect(function(err) {              
-    if(err) {                                     
-      // The server is either down
-      // or restarting (takes a while sometimes).
-      console.error('error when connecting to db:', new Date(), err);
-      setTimeout(handleDisconnect, 2000); 
-      // We introduce a delay before attempting to reconnect,
-      // to avoid a hot loop, and to allow our node script to
-      // process asynchronous requests in the meantime.
-    }                                     
-  });                                     
+  connection.connect();                                     
                                           
-  // If you're also serving http, display a 503 error.
   connection.on('error', function(err) {
-    console.error('db error', new Date(), err);
-    // if(err.code === 'PROTOCOL_CONNECTION_LOST') { 
-      // Connection to the MySQL server is usually
-      // lost due to either server restart, or a
-      // connnection idle timeout (the wait_timeout
-      // server variable configures this)
-      setTimeout(handleDisconnect, 2000); 
-      // handleDisconnect();                         
-    // } else {                                      
-      // throw err;                                  
-    // }
+    if(err) {                                     
+      console.error('connection.on(error):', new Date(), JSON.stringify(err));
+      if(!!instance){
+        instance.stop()
+      }
+      if(!!connection) {
+        connection.end()
+      }
+      setTimeout(handleDisconnect, 2000)
+    }   
   });
 
-  setInterval(function () {
-    connection.query('SELECT 1');
-  }, 5000);
-
-  instance = new MySQLEvents(connection, {
+  const instance = new MySQLEvents(connection, {
     startAtEnd: true,
     excludedSchemas: {
       mysql: true,
     },
   });
 
-  instance.start().then(()=> {
+  instance.start().then(() => {
     console.log('instance start')
     instance.addTrigger(trigger);
 
-    instance.on(MySQLEvents.EVENTS.CONNECTION_ERROR, (err) => console.error('Connection error', new Date(), err));
-    instance.on(MySQLEvents.EVENTS.ZONGJI_ERROR, (err) => console.error('ZongJi error', new Date(), err));
-
-    // instance.on('binlog', evt => {
-    //   console.log(evt)
-    // })
-  
+    // instance.on(MySQLEvents.EVENTS.CONNECTION_ERROR, (err) => {
+    //   if(err) {                                     
+    //     console.error('MySQLEvents.EVENTS.CONNECTION_ERROR: ', new Date(), JSON.stringify(err))
+    //     if(!!instance){
+    //       instance.stop()
+    //     }
+    //     if(!!connection) {
+    //       connection.end()
+    //     }
+    //     setTimeout(handleDisconnect, 2000)
+    //   }   
+    // });
+    instance.on(MySQLEvents.EVENTS.ZONGJI_ERROR, (err) => {
+      if(err) {                                     
+        console.error('MySQLEvents.EVENTS.ZONGJI_ERROR: ', new Date(), JSON.stringify(err))
+        if(!!instance){
+          instance.stop()
+        }
+        if(!!connection) {
+          connection.end()
+        }
+        setTimeout(handleDisconnect, 2000)
+      }   
+    });
   })
-
 }
 
 module.exports = {
   handleDisconnect,
-  MySQLEvents
 }
