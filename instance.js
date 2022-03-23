@@ -14,6 +14,7 @@ const trigger = {
   onEvent: (event) => { // You will receive the events here
     if(event.affectedRows.length) {
       event.affectedRows.map( row => {
+        console.log(JSON.stringify(row))
         if(row.after){
           row = row.after
         }
